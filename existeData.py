@@ -175,6 +175,8 @@ def copy_filtered_folders():
         messagebox.showerror("Error", str(e))
 
 
+import gzip
+import threading
 def extract_mprage_files():
 
     try:
@@ -189,14 +191,19 @@ def extract_mprage_files():
                 continue
 
             found_file = None
+            session_folder = None
 
-            # poore folder me search karo
             for root_dir, dirs, files in os.walk(subject_path):
 
                 for file in files:
 
-                    if file == "MPRAGE.nii":
+                    if "mprage" in file.lower() and file.lower().endswith(".nii.gz"):
+
                         found_file = os.path.join(root_dir, file)
+
+                        # session folder save karo
+                        session_folder = root_dir.split(subject_path)[1].split("\\")[1]
+
                         break
 
                 if found_file:
@@ -206,9 +213,11 @@ def extract_mprage_files():
 
                 destination = os.path.join(subject_path, "MPRAGE.nii")
 
-                shutil.copy(found_file, destination)
+                with gzip.open(found_file, 'rb') as f_in:
+                    with open(destination, 'wb') as f_out:
+                        shutil.copyfileobj(f_in, f_out)
 
-                # extra folders delete
+                # session folder delete
                 for item in os.listdir(subject_path):
 
                     item_path = os.path.join(subject_path, item)
@@ -226,7 +235,7 @@ def extract_mprage_files():
     except Exception as e:
         messagebox.showerror("Error", str(e))
 
-# ---------------- GUI ----------------
+        # ---------------- GUI ----------------
 
 root = tk.Tk()
 root.title("MRI Autism Dataset Builder")
@@ -272,7 +281,7 @@ btn_copy = tk.Button(root, text="Copy Filtered Folders",
 btn_copy.pack(pady=10)
 
 btn_extract = tk.Button(root, text="Extract MPRAGE Files",
-                        command=extract_mprage_files,
+                        command=lambda: threading.Thread(target=extract_mprage_files).start(),
                         width=25, height=2)
 
 btn_extract.pack(pady=10)

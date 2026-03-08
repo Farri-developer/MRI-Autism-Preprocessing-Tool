@@ -1,69 +1,94 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import messagebox
 import nibabel as nib
 import numpy as np
 from scipy.ndimage import zoom
 import os
+import subprocess
+import threading
 
-def preprocess_pipeline(file_path):
+INPUT_FOLDER = r"D:\MRI\Filter mri"
+OUTPUT_FOLDER = r"D:\MRI\preprocess"
+
+
+def preprocess_all():
 
     try:
-        status_label.config(text="Running HD-BET (skull removal)...")
-        root.update()
 
-        base = os.path.dirname(file_path)
-        name = os.path.splitext(os.path.basename(file_path))[0]
+        subjects = os.listdir(INPUT_FOLDER)
+        total = 0
 
-        skull_removed = os.path.join(base, name + "_brain.nii.gz")
+        for subject in subjects:
 
-        os.system(f'hd-bet -i "{file_path}" -o "{skull_removed}" -device cuda --disable_tta')
+            subject_path = os.path.join(INPUT_FOLDER, subject)
 
-        if not os.path.exists(skull_removed):
-            raise Exception("HD-BET failed. Output file not created.")
+            if not os.path.isdir(subject_path):
+                continue
 
-        status_label.config(text="Loading MRI...")
-        root.update()
+            file_path = os.path.join(subject_path, "MPRAGE.nii")
 
-        img = nib.load(skull_removed)
-        data = img.get_fdata()
+            if not os.path.exists(file_path):
+                print("MRI not found:", subject)
+                continue
 
-        status_label.config(text="Resizing MRI to 128x128x128...")
-        root.update()
+            status_label.config(text=f"Processing {subject}...")
+            root.update()
 
-        target = (128,128,128)
+            # -------- HD-BET Skull Removal --------
 
-        factors = (
-            target[0] / data.shape[0],
-            target[1] / data.shape[1],
-            target[2] / data.shape[2]
-        )
+            skull_removed = os.path.join(subject_path, "MPRAGE_brain.nii.gz")
 
-        data = zoom(data, factors)
+            subprocess.run([
+                "hd-bet",
+                "-i", file_path,
+                "-o", skull_removed,
+                "-device", "cuda",
+                "--disable_tta"
+            ])
 
-        status_label.config(text="Normalizing intensity...")
-        root.update()
+            if not os.path.exists(skull_removed):
+                print("HD-BET failed:", subject)
+                continue
 
-        data = (data - data.min()) / (data.max() - data.min())
+            # -------- Load MRI --------
 
-        status_label.config(text="Adding channel dimension...")
-        root.update()
+            img = nib.load(skull_removed)
+            data = img.get_fdata()
 
-        data = np.expand_dims(data, axis=-1)
+            # -------- Resize --------
 
-        status_label.config(text="Saving file to Desktop...")
-        root.update()
+            target = (128,128,128)
 
-        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+            factors = (
+                target[0] / data.shape[0],
+                target[1] / data.shape[1],
+                target[2] / data.shape[2]
+            )
 
-        output_path = os.path.join(desktop, name + "_preprocessed.nii")
+            data = zoom(data, factors)
 
-        new_img = nib.Nifti1Image(data[:,:,:,0], img.affine)
+            # -------- Normalize --------
 
-        nib.save(new_img, output_path)
+            data = (data - data.min()) / (data.max() - data.min())
+
+            # -------- Save --------
+
+            out_folder = os.path.join(OUTPUT_FOLDER, subject)
+            os.makedirs(out_folder, exist_ok=True)
+
+            output_path = os.path.join(out_folder, "MPRAGE.nii")
+
+            new_img = nib.Nifti1Image(data, img.affine)
+            nib.save(new_img, output_path)
+
+            total += 1
 
         status_label.config(text="Completed ✔")
 
-        messagebox.showinfo("Success", f"Preprocessed MRI saved to:\n{output_path}")
+        messagebox.showinfo(
+            "Finished",
+            f"{total} MRIs processed\nSaved in:\n{OUTPUT_FOLDER}"
+        )
 
     except Exception as e:
 
@@ -71,49 +96,25 @@ def preprocess_pipeline(file_path):
         messagebox.showerror("Error", str(e))
 
 
-def select_file():
+# -------- Run in thread (GUI freeze fix) --------
 
-    file_path = filedialog.askopenfilename(
-        title="Select MRI File",
-        filetypes=[("NIfTI files", "*.nii")]
-    )
-
-    if file_path:
-        preprocess_pipeline(file_path)
+def start_processing():
+    threading.Thread(target=preprocess_all).start()
 
 
-# ---------------- GUI ---------------- #
+# -------- GUI --------
 
 root = tk.Tk()
-root.title("MRI Preprocessing Tool (CNN Ready)")
+root.title("MRI Batch Preprocessing")
 root.geometry("450x260")
-root.resizable(False, False)
 
-title = tk.Label(
-    root,
-    text="MRI Preprocessing Tool",
-    font=("Arial",16,"bold")
-)
-
+title = tk.Label(root, text="MRI Batch Preprocessing (HD-BET + GPU)", font=("Arial",16,"bold"))
 title.pack(pady=20)
 
-btn = tk.Button(
-    root,
-    text="Select MRI (.nii)",
-    font=("Arial",12),
-    width=20,
-    height=2,
-    command=select_file
-)
-
+btn = tk.Button(root, text="Start Preprocessing", width=22, height=2, command=start_processing)
 btn.pack(pady=20)
 
-status_label = tk.Label(
-    root,
-    text="Waiting for file selection...",
-    font=("Arial",10)
-)
-
-status_label.pack(pady=10)
+status_label = tk.Label(root, text="Waiting to start...")
+status_label.pack()
 
 root.mainloop()
